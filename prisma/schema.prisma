@@ -1,0 +1,509 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Naming note (2026-10-16 pivot): the product now has ONE mode. The operator who
+// signs in is stored in `Consultant`, a client company in `Organization`, and an
+// audit in `Engagement`. The UI says "you", "Company", "Audit". The model names
+// were kept to avoid a risky rename across routes and migrations.
+// ---------------------------------------------------------------------------
+
+enum EngagementStatus {
+  draft
+  in_progress
+  review
+  complete
+}
+
+enum EngagementKind {
+  initial
+  resurvey
+}
+
+enum AnswerType {
+  single
+  multi
+  scale
+  text
+  boolean
+}
+
+// Who answers a question. `employee` = the anonymous usage survey. `it` = the
+// legacy 50-question IT deep-dive the operator fills in with the client's IT lead.
+enum QuestionAudience {
+  employee
+  it
+}
+
+enum NistFunction {
+  GOVERN
+  MAP
+  MEASURE
+  MANAGE
+}
+
+enum RagRating {
+  red
+  amber
+  green
+}
+
+enum Effort {
+  low
+  med
+  high
+}
+
+enum AccessMethod {
+  org_account
+  personal_account
+  browser_ext
+  api
+  mcp_agent
+}
+
+enum ToolSource {
+  manual
+  survey
+  scan
+  expense
+}
+
+enum DocumentType {
+  aup
+  report
+  exec_readout
+  ai_plan
+}
+
+enum FindingOrigin {
+  auto
+  manual
+}
+
+enum WorkspaceSuite {
+  google
+  microsoft
+  both
+  none
+  unknown
+}
+
+enum ConnectorProvider {
+  google
+  microsoft
+  demo
+}
+
+enum ConnectionStatus {
+  active
+  revoked
+  error
+}
+
+enum ScanStatus {
+  running
+  complete
+  failed
+}
+
+enum AiConfidence {
+  high
+  medium
+  low
+  none
+}
+
+enum RiskLevel {
+  high
+  medium
+  low
+}
+
+enum AlertType {
+  new_ai_app
+  new_user
+  scan_failed
+  resurvey_due
+  signoff_overdue
+}
+
+enum AlertSeverity {
+  info
+  warning
+  critical
+}
+
+enum AckStatus {
+  pending
+  signed
+}
+
+enum QuoteKind {
+  audit
+  monitoring
+}
+
+enum QuoteStatus {
+  draft
+  sent
+  accepted
+  paid
+  void
+}
+
+model Consultant {
+  id             String           @id @default(cuid())
+  email          String           @unique
+  name           String
+  hashedPassword String?
+  createdAt      DateTime         @default(now())
+  organizations  Organization[]
+  settings       OperatorSettings?
+}
+
+// Per-operator pricing and delivery settings. Money is stored in integer cents.
+model OperatorSettings {
+  id                                String     @id @default(cuid())
+  consultantId                      String     @unique
+  consultant                        Consultant @relation(fields: [consultantId], references: [id], onDelete: Cascade)
+  auditPricePerEmployeeCents        Int        @default(0)   
+  auditMinimumCents                 Int        @default(0)    
+  monitoringPricePerEmployeeCents   Int        @default(0)  
+  monitoringMinimumCents            Int        @default(0)   
+  businessName                      String?
+  replyToEmail                      String?
+  updatedAt                         DateTime   @updatedAt
+}
+
+model Organization {
+  id                  String                @id @default(cuid())
+  consultantId        String
+  consultant          Consultant            @relation(fields: [consultantId], references: [id], onDelete: Cascade)
+  name                String
+  industry            String
+  employeeCount       Int
+  hasEUexposure       Boolean               @default(false)
+  contactName         String?
+  contactEmail        String?
+  website             String?
+  monitoringActive    Boolean               @default(false)
+  monitoringSince     DateTime?
+  nextResurveyAt      DateTime?
+  stripeCustomerId    String?
+  stripeSubscriptionId String?
+  createdAt           DateTime              @default(now())
+  engagements         Engagement[]
+  profile             CompanyProfile?
+  connections         ScanConnection[]
+  scans               Scan[]
+  discoveredApps      DiscoveredApp[]
+  alerts              Alert[]
+  quotes              Quote[]
+
+  @@index([consultantId])
+}
+
+// The short owner questionnaire. Drives scoring context, the policy text and the
+// AI platform recommendation. Filled in by the operator with the owner.
+model CompanyProfile {
+  id                   String         @id @default(cuid())
+  organizationId       String         @unique
+  organization         Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  suite                WorkspaceSuite @default(unknown)
+  dataTypes            String[]       @default([])
+  providedTools        String[]       @default([])
+  hasWrittenPolicy     Boolean?
+  remoteWork           String?
+  priorities           String[]       @default([])
+  currentAiSpendCents  Int?
+  notes                String?
+  updatedAt            DateTime       @updatedAt
+}
+
+model Engagement {
+  id             String           @id @default(cuid())
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  status         EngagementStatus @default(draft)
+  kind           EngagementKind   @default(initial)
+  startedAt      DateTime         @default(now())
+  completedAt    DateTime?
+  responses      Response[]
+  aiTools        AITool[]
+  riskFindings   RiskFinding[]
+  documents      PolicyDocument[]
+  expenseMatches ExpenseMatch[]
+  acknowledgements PolicyAcknowledgement[]
+  scans          Scan[]
+  quotes         Quote[]
+
+  @@index([organizationId])
+}
+
+model Question {
+  id           String           @id @default(cuid())
+  domain       String
+  text         String
+  helpText     String?
+  answerType   AnswerType
+  options      Json?
+  nistFunction NistFunction
+  owaspRefs    String[]         @default([])
+  weight       Int
+  audience     QuestionAudience @default(it)
+  // Stable key so derivation code can find a specific question (e.g. "tools_used").
+  key          String?          @unique
+  sortOrder    Int              @default(0)
+  responses    Response[]
+  riskFindings RiskFinding[]
+}
+
+model Response {
+  id              String     @id @default(cuid())
+  engagementId    String
+  engagement      Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  questionId      String
+  question        Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  value           Json
+  respondentToken String?
+  submittedAt     DateTime   @default(now())
+
+  @@index([engagementId])
+}
+
+model AITool {
+  id                String       @id @default(cuid())
+  engagementId      String
+  engagement        Engagement   @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  name              String
+  vendor            String?
+  category          String?
+  dataExposureLevel String?
+  sanctioned        Boolean      @default(false)
+  accessMethod      AccessMethod
+  notes             String?
+  // Where this row came from. Derivation only overwrites rows it created.
+  source            ToolSource   @default(manual)
+  // Key into src/lib/ai-catalog.ts so survey, scan and expense evidence merge.
+  catalogKey        String?
+  // How many survey respondents reported using it.
+  reportedBy        Int          @default(0)
+  // Monthly spend found in expense data, in cents.
+  monthlySpendCents Int?
+  riskFindings      RiskFinding[]
+
+  @@unique([engagementId, catalogKey])
+  @@index([engagementId])
+}
+
+model RiskFinding {
+  id             String       @id @default(cuid())
+  engagementId   String
+  engagement     Engagement   @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  title          String
+  description    String
+  likelihood     Int
+  impact         Int
+  ragRating      RagRating
+  owaspRefs      String[]     @default([])
+  nistFunction   NistFunction
+  recommendation String
+  effort         Effort
+  priorityRank   Int?
+  // auto = generated by the scoring engine (replaced on regenerate);
+  // manual = operator-authored or operator-edited (preserved on regenerate).
+  origin         FindingOrigin @default(auto)
+  // Source survey question for an auto finding (null for purely manual ones).
+  // On regenerate, a question already "claimed" by a manual finding is skipped,
+  // so editing an auto finding never produces a duplicate on re-run.
+  questionId     String?
+  question       Question?     @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  // Source inventoried AI tool (inventory-derived findings). Same skip-on-
+  // regenerate role as questionId.
+  aiToolId       String?
+  aiTool         AITool?       @relation(fields: [aiToolId], references: [id], onDelete: SetNull)
+
+  @@index([engagementId])
+  @@index([questionId])
+  @@index([aiToolId])
+}
+
+model PolicyDocument {
+  id              String       @id @default(cuid())
+  engagementId    String
+  engagement      Engagement   @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  type            DocumentType
+  contentMarkdown String
+  version         Int          @default(1)
+  generatedAt     DateTime     @default(now())
+  // Set when the operator publishes the policy for employee sign-off.
+  publishedAt     DateTime?
+  acknowledgements PolicyAcknowledgement[]
+
+  @@index([engagementId])
+}
+
+// A client admin's read-only connection to Google Workspace or Microsoft 365.
+// `encryptedCredentials` holds the AES-256-GCM encrypted refresh token (Google)
+// or tenant id (Microsoft, app-only). Never returned to the browser.
+model ScanConnection {
+  id                   String            @id @default(cuid())
+  organizationId       String
+  organization         Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  provider             ConnectorProvider
+  externalTenantId     String?
+  adminEmail           String?
+  encryptedCredentials String
+  scopes               String[]          @default([])
+  status               ConnectionStatus  @default(active)
+  lastScanAt           DateTime?
+  lastError            String?
+  createdAt            DateTime          @default(now())
+  scans                Scan[]
+
+  @@index([organizationId])
+}
+
+model Scan {
+  id             String            @id @default(cuid())
+  organizationId String
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  engagementId   String?
+  engagement     Engagement?       @relation(fields: [engagementId], references: [id], onDelete: SetNull)
+  connectionId   String?
+  connection     ScanConnection?   @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  provider       ConnectorProvider
+  status         ScanStatus        @default(running)
+  startedAt      DateTime          @default(now())
+  finishedAt     DateTime?
+  userCount      Int?
+  appCount       Int?
+  aiAppCount     Int?
+  error          String?
+  // Provider-specific extras (e.g. built-in Copilot active users). Never credentials.
+  summary        Json?
+  apps           DiscoveredApp[]
+
+  @@index([organizationId])
+  @@index([engagementId])
+}
+
+// One third-party app found connected to the client's workspace during a scan.
+model DiscoveredApp {
+  id             String       @id @default(cuid())
+  scanId         String
+  scan           Scan         @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  externalId     String
+  name           String
+  publisher      String?
+  isAi           Boolean      @default(false)
+  aiConfidence   AiConfidence @default(none)
+  catalogKey     String?
+  category       String?
+  scopes         String[]     @default([])
+  userCount      Int          @default(0)
+  // AES-256-GCM encrypted JSON array of user emails with access (admin audit data).
+  encryptedUsers String?
+  riskLevel      RiskLevel    @default(low)
+  riskNotes      String[]     @default([])
+  firstSeenAt    DateTime     @default(now())
+
+  @@index([scanId])
+  @@index([organizationId, externalId])
+}
+
+model Alert {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  type           AlertType
+  severity       AlertSeverity @default(info)
+  title          String
+  body           String
+  data           Json?
+  createdAt      DateTime      @default(now())
+  resolvedAt     DateTime?
+
+  @@index([organizationId, resolvedAt])
+}
+
+// Aggregated AI charges found in an uploaded expense export. The raw file is
+// never stored; only these vendor-level totals are.
+model ExpenseMatch {
+  id            String     @id @default(cuid())
+  engagementId  String
+  engagement    Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  vendorKey     String
+  vendorName    String
+  toolName      String
+  chargeCount   Int
+  totalCents    Int
+  monthlyCents  Int
+  firstChargeAt DateTime?
+  lastChargeAt  DateTime?
+  cardholder    String?
+  createdAt     DateTime   @default(now())
+
+  @@index([engagementId])
+}
+
+model PolicyAcknowledgement {
+  id              String         @id @default(cuid())
+  engagementId    String
+  engagement      Engagement     @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  documentId      String?
+  document        PolicyDocument? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  documentVersion Int?
+  name            String?
+  email           String
+  status          AckStatus      @default(pending)
+  invitedAt       DateTime       @default(now())
+  signedAt        DateTime?
+  ipHash          String?
+  createdAt       DateTime       @default(now())
+
+  @@unique([engagementId, email])
+  @@index([engagementId, status])
+}
+
+model Quote {
+  id               String       @id @default(cuid())
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  engagementId     String?
+  engagement       Engagement?  @relation(fields: [engagementId], references: [id], onDelete: SetNull)
+  kind             QuoteKind
+  employeeCount    Int
+  unitCents        Int
+  subtotalCents    Int
+  minimumCents     Int
+  totalCents       Int
+  status           QuoteStatus  @default(draft)
+  stripeSessionId  String?
+  stripePaymentId  String?
+  notes            String?
+  createdAt        DateTime     @default(now())
+  paidAt           DateTime?
+
+  @@index([organizationId])
+}
+
+// Single-use tokens (magic links, OAuth state). A jti is recorded the first
+// time it is accepted; a second presentation is rejected. Rows expire with the
+// token and can be pruned.
+model ConsumedToken {
+  jti       String   @id
+  purpose   String
+  expiresAt DateTime
+  usedAt    DateTime @default(now())
+
+  @@index([expiresAt])
+}

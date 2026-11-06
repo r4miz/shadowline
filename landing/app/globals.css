@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-moss: var(--moss);
+  --color-forest: var(--forest);
+  --color-copper: var(--copper);
+  --color-copper-2: var(--copper-2);
+  --color-line: var(--line);
+  --color-sand: var(--sand);
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-fraunces), Georgia, serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+}
+
+/* "Field Notes" palette, shared with the app. No blue, no purple. */
+:root {
+  --paper: #f5f2ec;
+  --paper-2: #ece7de;
+  --ink: #161a17;
+  --ink-2: #2a312c;
+  --moss: #5f6b64;
+  --forest: #1f4d3a;
+  --copper: #b5522a;
+  --copper-2: #d98b5f;
+  --line: #ddd6ca;
+  --sand: #d9b99b;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "ss01", "cv11";
+}
+.font-heading {
+  font-variation-settings: "opsz" 144, "SOFT" 30;
+  letter-spacing: -0.015em;
+}
+::selection {
+  background: color-mix(in oklch, var(--copper) 30%, transparent);
+}
+
+.grain {
+  background-image: radial-gradient(circle at 1px 1px, color-mix(in oklch, var(--ink) 7%, transparent) 1px, transparent 0);
+  background-size: 22px 22px;
+}
+.rule {
+  border-top: 2px solid var(--ink);
+}
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--moss);
+  font-weight: 500;
+}
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Focus ring: visible, copper, never removed. */
+:focus-visible {
+  outline: 2px solid var(--copper);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
